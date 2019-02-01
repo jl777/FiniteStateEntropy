@@ -40,17 +40,20 @@
 *  Increasing memory usage improves compression ratio
 *  Reduced memory usage can improve speed, due to cache effect
 *  Recommended max value is 14, for 16KB, which nicely fits into Intel x86 L1 cache */
-#define FSE_MAX_MEMORY_USAGE 15
-#define FSE_DEFAULT_MEMORY_USAGE 14
-
+#ifndef FSEU16_MAX_MEMORY_USAGE
+#  define FSEU16_MAX_MEMORY_USAGE 15
+#endif
+#ifndef FSEU16_DEFAULT_MEMORY_USAGE
+#  define FSEU16_DEFAULT_MEMORY_USAGE 14
+#endif
 
 /* **************************************************************
 *  Includes
 *****************************************************************/
 #include "fseU16.h"
 #define FSEU16_SYMBOLVALUE_ABSOLUTEMAX 4095
-#if (FSE_MAX_SYMBOL_VALUE > FSEU16_SYMBOLVALUE_ABSOLUTEMAX)
-#  error "FSE_MAX_SYMBOL_VALUE is too large !"
+#if (FSEU16_MAX_SYMBOL_VALUE > FSEU16_SYMBOLVALUE_ABSOLUTEMAX)
+#  error "FSEU16_MAX_SYMBOL_VALUE is too large !"
 #endif
 
 /* **************************************************************
@@ -84,11 +87,21 @@ typedef struct {
 *********************************************************************/
 #define FSE_COMMONDEFS_ONLY
 
+#ifdef FSE_MAX_MEMORY_USAGE
+#  undef FSE_MAX_MEMORY_USAGE
+#endif
+#ifdef FSE_DEFAULT_MEMORY_USAGE
+#  undef FSE_DEFAULT_MEMORY_USAGE
+#endif
+#define FSE_MAX_MEMORY_USAGE FSEU16_MAX_MEMORY_USAGE
+#define FSE_DEFAULT_MEMORY_USAGE FSEU16_DEFAULT_MEMORY_USAGE
+
 #define FSE_FUNCTION_TYPE U16
 #define FSE_FUNCTION_EXTENSION U16
 
 #define FSE_count_generic FSE_count_genericU16
 #define FSE_buildCTable   FSE_buildCTableU16
+#define FSE_buildCTable_wksp FSE_buildCTable_wksp_U16
 
 #define FSE_DECODE_TYPE   FSE_decode_tU16
 #define FSE_createDTable  FSE_createDTableU16
@@ -100,11 +113,10 @@ typedef struct {
 
 
 /*! FSE_countU16() :
-    This function just counts U16 values within `src`,
-    and store the histogram into `count`.
-    This function is unsafe : it doesn't check that all values within `src` can fit into `count`.
-    For this reason, prefer using a table `count` with 256 elements.
-    @return : highest count for a single element
+    This function counts U16 values stored in `src`,
+    and push the histogram into `count`.
+   @return : count of most common element
+   *maxSymbolValuePtr : will be updated with value of highest symbol.
 */
 size_t FSE_countU16(unsigned* count, unsigned* maxSymbolValuePtr,
                     const U16* src, size_t srcSize)
@@ -112,23 +124,24 @@ size_t FSE_countU16(unsigned* count, unsigned* maxSymbolValuePtr,
     const U16* ip16 = (const U16*)src;
     const U16* const end = src + srcSize;
     unsigned maxSymbolValue = *maxSymbolValuePtr;
-    unsigned max=0;
-    U32 s;
 
     memset(count, 0, (maxSymbolValue+1)*sizeof(*count));
     if (srcSize==0) { *maxSymbolValuePtr = 0; return 0; }
 
     while (ip16<end) {
-        if (*ip16 > maxSymbolValue) return ERROR(maxSymbolValue_tooSmall);
+        if (*ip16 > maxSymbolValue)
+            return ERROR(maxSymbolValue_tooSmall);
         count[*ip16++]++;
     }
 
     while (!count[maxSymbolValue]) maxSymbolValue--;
     *maxSymbolValuePtr = maxSymbolValue;
 
-    for (s=0; s<=maxSymbolValue; s++) if (count[s] > max) max = count[s];
-
-    return (size_t)max;
+    {   U32 s, max=0;
+        for (s=0; s<=maxSymbolValue; s++)
+            if (count[s] > max) max = count[s];
+        return (size_t)max;
+    }
 }
 
 /* *******************************************************
@@ -170,7 +183,7 @@ size_t FSE_compressU16_usingCTable (void* dst, size_t maxDstSize,
     while (ip>istart) {
         FSE_encodeSymbol(&bitC, &CState, *--ip);
 
-        if (sizeof(size_t)*8 < FSE_MAX_TABLELOG*2+7 )   /* This test must be static */
+        if (sizeof(size_t)*8 < FSE_MAX_TABLELOG*2+7 )  /* This test must be static */
             BIT_flushBits(&bitC);
 
         FSE_encodeSymbol(&bitC, &CState, *--ip);
@@ -200,9 +213,6 @@ size_t FSE_compressU16(void* dst, size_t maxDstSize,
 
     U32   counting[FSE_MAX_SYMBOL_VALUE+1] = {0};
     S16   norm[FSE_MAX_SYMBOL_VALUE+1];
-    CTable_max_t ct;
-
-
 
     /* checks */
     if (srcSize <= 1) return srcSize;
@@ -214,7 +224,7 @@ size_t FSE_compressU16(void* dst, size_t maxDstSize,
     /* Scan for stats */
     {   size_t const maxCount = FSE_countU16 (counting, &maxSymbolValue, ip, srcSize);
         if (FSE_isError(maxCount)) return maxCount;
-        if (maxCount == srcSize) return 1;   /* Input data is one constant element x srcSize times. Use RLE compression. */
+        if (maxCount == srcSize) return 1;   /* src contains one constant element x srcSize times. Use RLE compression. */
     }
     /* Normalize */
     tableLog = FSE_optimalTableLog(tableLog, srcSize, maxSymbolValue);
@@ -227,10 +237,11 @@ size_t FSE_compressU16(void* dst, size_t maxDstSize,
         op += NSize;
     }
     /* Compress */
-    {   size_t const errorCode = FSE_buildCTableU16 (ct, norm, maxSymbolValue, tableLog);
+    {   FSE_CTable CTable[FSE_CTABLE_SIZE_U32(FSE_MAX_TABLELOG, FSE_MAX_SYMBOL_VALUE)];
+        size_t const errorCode = FSE_buildCTableU16 (CTable, norm, maxSymbolValue, tableLog);
         if (FSE_isError(errorCode)) return errorCode;
+        op += FSE_compressU16_usingCTable (op, omax - op, ip, srcSize, CTable);
     }
-    op += FSE_compressU16_usingCTable (op, omax - op, ip, srcSize, ct);
 
     /* check compressibility */
     if ( (size_t)(op-ostart) >= (size_t)(srcSize-1)*(sizeof(U16)) )
@@ -274,15 +285,23 @@ size_t FSE_decompressU16_usingDTable (U16* dst, size_t maxDstSize,
     BIT_initDStream(&bitD, cSrc, cSrcSize);
     FSE_initDState(&state, &bitD, dt);
 
-    while((BIT_reloadDStream(&bitD) < 2) && (op<oend)) {
+    while((BIT_reloadDStream(&bitD) < BIT_DStream_completed) && (op<oend)) {
         *op++ = FSE_decodeSymbolU16(&state, &bitD);
     }
 
-    if (!BIT_endOfDStream(&bitD)) return ERROR(GENERIC);
+    if (!BIT_endOfDStream(&bitD)) return ERROR(corruption_detected);
+
+    while (state.state && op<oend) {
+        *op++ = FSE_decodeSymbolU16(&state, &bitD);
+    }
+
+    if (state.state) return ERROR(corruption_detected);
 
     return op-ostart;
 }
 
+
+typedef FSE_DTable DTable_max_t[FSE_DTABLE_SIZE_U32(FSE_MAX_TABLELOG)];
 
 size_t FSE_decompressU16(U16* dst, size_t maxDstSize,
                   const void* cSrc, size_t cSrcSize)

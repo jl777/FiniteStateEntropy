@@ -1,6 +1,6 @@
 /*
   commandline.c - simple command line interface for FSE
-  Copyright (C) Yann Collet 2013-2016
+  Copyright (C) Yann Collet 2013-2017
 
   GPL v2 License
 
@@ -82,8 +82,8 @@
 /*-*************************************************
 *  Local variables
 ***************************************************/
-static int   displayLevel = 2;   // 0 : no display  // 1: errors  // 2 : + result + interaction + warnings ;  // 3 : + progression;  // 4 : + information
-static int   fse_pause = 0;
+static int displayLevel = 2;   // 0 : no display  // 1: errors  // 2 : + result + interaction + warnings ;  // 3 : + progression;  // 4 : + information
+static int fse_pause = 0;
 
 
 /*-*************************************************
@@ -126,14 +126,16 @@ static void waitEnter(void)
 int main(int argc, const char** argv)
 {
     int   i,
-          forceCompress=1, decode=0, bench=0; /* default action if no argument */
-    int   indexFileNames=0;
+          forceCompress = 1,  /* default action if no argument */
+          decode= 0,
+          bench = 0;
+    int   indexFileNames = 0;
     const char* input_filename = NULL;
     const char* output_filename= NULL;
     char*  tmpFilenameBuffer   = NULL;
     size_t tmpFilenameSize     = 0;
     const char extension[] = FSE_EXTENSION;
-    const char* programName = argv[0];
+    const char* const programName = argv[0];
     FIO_compressor_t compressor = FIO_fse;
 
     DISPLAY(WELCOME_MESSAGE);
@@ -192,7 +194,7 @@ int main(int argc, const char** argv)
                 case 'f': FIO_overwriteMode(); break;
 
                     // Verbose mode
-                case 'v': displayLevel=4; break;
+                case 'v': displayLevel++; break;
 
                     // Quiet mode
                 case 'q': displayLevel--; break;
@@ -255,8 +257,6 @@ int main(int argc, const char** argv)
         if (!output_filename) { output_filename=argument; continue; }
     }
 
-    /* DISPLAYLEVEL(3, WELCOME_MESSAGE); */
-
     /* No input filename ==> use stdin */
     if(!input_filename) { input_filename=stdinmark; }
 
@@ -271,17 +271,17 @@ int main(int argc, const char** argv)
     while (!output_filename) {
         if (!IS_CONSOLE(stdout)) { output_filename=stdoutmark; break; }   // Default to stdout whenever possible (i.e. not a console)
         if ((!decode) && !(forceCompress)) {   // auto-determine compression or decompression, based on file extension
-            size_t l = strlen(input_filename);
+            size_t const l = strlen(input_filename);
             if (!strcmp(input_filename+(l-4), FSE_EXTENSION)) decode=1;
         }
         if (!decode) {   /* compression to file */
-            size_t l = strlen(input_filename);
+            size_t const l = strlen(input_filename);
             if (tmpFilenameSize < l+6) tmpFilenameSize = l+6;
             tmpFilenameBuffer = (char*)calloc(1,tmpFilenameSize);
-			if (tmpFilenameBuffer==NULL) {
-				DISPLAY("Not enough memory, exiting ... \n");
-				exit(1);
-			}
+            if (tmpFilenameBuffer==NULL) {
+                DISPLAY("Not enough memory, exiting ... \n");
+                exit(1);
+            }
             strcpy(tmpFilenameBuffer, input_filename);
             strcpy(tmpFilenameBuffer+l, FSE_EXTENSION);
             output_filename = tmpFilenameBuffer;
@@ -290,7 +290,7 @@ int main(int argc, const char** argv)
         }
         /* decompression to file (automatic name will work only if input filename has correct format extension) */
         {   size_t outl;
-            size_t inl = strlen(input_filename);
+            size_t const inl = strlen(input_filename);
             if (tmpFilenameSize < inl+2) tmpFilenameSize = inl+2;
             tmpFilenameBuffer = (char*)calloc(1,tmpFilenameSize);
             strcpy(tmpFilenameBuffer, input_filename);
@@ -310,6 +310,7 @@ int main(int argc, const char** argv)
     if (!strcmp(input_filename, stdinmark)  && IS_CONSOLE(stdin) ) badusage(programName);
     if (!strcmp(output_filename,stdoutmark) && IS_CONSOLE(stdout)) badusage(programName);
 
+    FIO_setDisplayLevel(displayLevel);
     if (decode) FIO_decompressFilename(output_filename, input_filename);
     else {
         FIO_setCompressor(compressor);
